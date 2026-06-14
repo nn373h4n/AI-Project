@@ -3,12 +3,16 @@ import numpy as np
 import torch
 import tempfile
 import os
+import subprocess
 import logging
 from collections import deque
 from typing import Optional, Callable, List, Tuple, Dict
 
+import imageio_ffmpeg
 from ultralytics import YOLO
 from config import MIN_CONF
+
+_FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +125,32 @@ class TheftDetector:
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
 
+        # H.264 çıktısı için ffmpeg pipe kullan (tarayıcı uyumlu)
         tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         out_path = tmp.name
         tmp.close()
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+        ffmpeg_cmd = [
+            _FFMPEG, "-y",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{w}x{h}",
+            "-r", str(fps),
+            "-i", "pipe:0",
+            "-vcodec", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            out_path,
+        ]
+        ffproc = subprocess.Popen(
+            ffmpeg_cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
         events = []
         frame_idx = 0
@@ -138,7 +162,7 @@ class TheftDetector:
 
             ts = frame_idx / fps
             annotated, event = self._process_frame(frame, ts)
-            writer.write(annotated)
+            ffproc.stdin.write(annotated.tobytes())
             if event:
                 events.append(event)
 
@@ -147,7 +171,8 @@ class TheftDetector:
                 progress_fn(frame_idx / total)
 
         cap.release()
-        writer.release()
+        ffproc.stdin.close()
+        ffproc.wait()
 
         seen_ids: set = set()
         results = []
