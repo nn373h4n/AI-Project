@@ -1,4 +1,5 @@
 import logging
+import os
 import warnings
 import torch
 from datetime import datetime
@@ -566,13 +567,7 @@ def analyze(
     try:
         out_video, flagged, frame_count = det.process_video(video_file, progress_fn=prog)
     except Exception as exc:
-        return None, [], f"> HATA: {exc}", STATS_EMPTY
-
-    # Gradio 6'nın servis edebileceği temp konumuna kopyala
-    import shutil, tempfile
-    served = os.path.join(tempfile.gettempdir(), "hirsizlik_annotated.mp4")
-    shutil.copy2(out_video, served)
-    out_video = served
+        return _video_html(None), [], f"> HATA: {exc}", STATS_EMPTY
 
     total = len(det.tracks)
     logs.append(f"> [{_ts()}] Tamamlandi  kare:{frame_count}  kisi:{total}  suphe:{len(flagged)}")
@@ -623,7 +618,26 @@ def analyze(
 </div>
 """
     progress(1.0, desc="Tamamlandi")
-    return out_video, gallery, "\n".join(logs), stats
+    return _video_html(out_video), gallery, "\n".join(logs), stats
+
+
+_OUTPUT_DIR = os.path.abspath("output")
+
+
+def _video_html(path: str | None) -> str:
+    if not path or not os.path.exists(path):
+        return '<div style="height:440px;display:flex;align-items:center;justify-content:center;color:#243040;font-family:monospace;font-size:.7rem;letter-spacing:2px">ANALİZ BEKLENİYOR</div>'
+    fname = os.path.basename(path)
+    return f"""
+<video controls autoplay muted loop
+  style="width:100%;max-height:440px;background:#000;display:block"
+  preload="auto">
+  <source src="/file={_OUTPUT_DIR}/{fname}" type="video/mp4">
+</video>
+<div style="font-family:monospace;font-size:.55rem;color:#243040;letter-spacing:2px;margin-top:6px">
+  OUTPUT/{fname}
+</div>
+"""
 
 
 def check_tg(token: str, chat: str):
@@ -637,6 +651,9 @@ def check_tg(token: str, chat: str):
 
 # ─────────────────────────────────────────────────────────────────────────────
 def build_ui():
+    os.makedirs(_OUTPUT_DIR, exist_ok=True)
+    gr.set_static_paths([_OUTPUT_DIR])
+
     with gr.Blocks(
         css=CSS,
         title="Hirsizlik Analiz",
@@ -707,11 +724,10 @@ def build_ui():
                     run_btn = gr.Button("ANALİZ BAŞLAT", variant="primary", size="lg")
                     clr_btn = gr.Button("Sifirla", variant="secondary")
 
-            # RIGHT — output video
+            # RIGHT — output video (HTML player, Gradio static file serving)
             with gr.Column(scale=7, elem_id="vid-out"):
                 gr.HTML('<div class="sec"><span class="sec-mark">//</span> Cikti — Annotated</div>')
-                video_out = gr.Video(label="Islenmi video", height=440, format="mp4")
-                dl_btn = gr.File(label="Videoyu indir", visible=False)
+                video_out = gr.HTML(_video_html(None))
 
         # ── stats ────────────────────────────────────────────────────────────
         stats_box = gr.HTML(STATS_EMPTY)
@@ -731,19 +747,14 @@ def build_ui():
         log_box = gr.Textbox(label="", lines=8, interactive=False, elem_id="log-box")
 
         # ── wiring ───────────────────────────────────────────────────────────
-        def analyze_and_dl(*args):
-            vid, gal, log, stats = analyze(*args)
-            dl = gr.File(value=vid, visible=True) if vid else gr.File(visible=False)
-            return vid, gal, log, stats, dl
-
         run_btn.click(
-            fn=analyze_and_dl,
+            fn=analyze,
             inputs=[video_in, tg_token, tg_chat, model_r, dwell_sl, move_sl],
-            outputs=[video_out, gallery, log_box, stats_box, dl_btn],
+            outputs=[video_out, gallery, log_box, stats_box],
         )
         clr_btn.click(
-            fn=lambda: (None, None, [], "", STATS_EMPTY, gr.File(visible=False)),
-            outputs=[video_in, video_out, gallery, log_box, stats_box, dl_btn],
+            fn=lambda: (_video_html(None), None, [], "", STATS_EMPTY),
+            outputs=[video_out, video_in, gallery, log_box, stats_box],
         )
         tg_btn.click(
             fn=check_tg,
@@ -756,12 +767,9 @@ def build_ui():
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import os
-    os.makedirs("output", exist_ok=True)
     build_ui().launch(
         server_port=7860,
         server_name="0.0.0.0",
         share=False,
         show_error=True,
-        allowed_paths=[os.path.abspath("output")],
     )
