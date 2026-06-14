@@ -204,17 +204,64 @@ class TheftDetector:
                 self.flagged_tracks.append(track)
                 event = {"track_id": int(tid), "ts": ts, "reason": reason}
 
-            x1, y1, x2, y2 = map(int, box)
-            color = (30, 30, 210) if track.flagged else (30, 190, 80)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-
-            tag = "SUPHELi!" if track.flagged else "Normal"
-            label = f"[{tid}] {tag}  {conf:.0%}"
-            ly = max(y1 - 7, 14)
-            cv2.putText(annotated, label, (x1, ly),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 2)
+            self._draw_track(annotated, box, track, conf)
 
         return self._overlay_info(annotated, ts, len(ids)), event
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _draw_track(img: np.ndarray, box: np.ndarray, track: "PersonTrack", conf: float) -> None:
+        x1, y1, x2, y2 = map(int, box)
+        tid = track.track_id
+
+        if track.flagged:
+            color     = (0, 0, 220)        # kırmızı (BGR)
+            lbl_bg    = (0, 0, 170)
+            thickness = 3
+            label     = f" ID:{tid}  SUPHE! "
+
+            # yarı saydam kırmızı dolgu
+            overlay = img.copy()
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 150), -1)
+            cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
+
+            # alt alarm bandı
+            ay = min(y2 + 20, img.shape[0] - 4)
+            cv2.putText(img, "! HIRSIZLIK ALARMI !", (x1, ay),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.44, color, 2)
+        else:
+            color     = (40, 210, 40)      # yeşil (BGR)
+            lbl_bg    = (20, 150, 20)
+            thickness = 2
+            label     = f" ID:{tid}  IZLENIYOR "
+
+        # — köşe bracket kutusu —
+        cl = max(10, min(18, (x2 - x1) // 4, (y2 - y1) // 4))
+        corners = [
+            [(x1, y1 + cl), (x1, y1),  (x1 + cl, y1)],
+            [(x2 - cl, y1), (x2, y1),  (x2, y1 + cl)],
+            [(x1, y2 - cl), (x1, y2),  (x1 + cl, y2)],
+            [(x2 - cl, y2), (x2, y2),  (x2, y2 - cl)],
+        ]
+        for pts in corners:
+            for i in range(len(pts) - 1):
+                cv2.line(img, pts[i], pts[i + 1], color, thickness)
+
+        # — hareket izi (son 25 konum) —
+        pos_list = list(track.positions)[-25:]
+        for i, (cx, cy) in enumerate(pos_list):
+            alpha = (i + 1) / len(pos_list)
+            r = max(1, int(3 * alpha))
+            fade = tuple(int(c * alpha * 0.9) for c in color)
+            cv2.circle(img, (int(cx), int(cy)), r, fade, -1)
+
+        # — etiket (renkli zemin üzerine) —
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        fs, ft = 0.44, 1
+        (tw, th), bl = cv2.getTextSize(label, font, fs, ft)
+        ly = max(y1 - 4, th + 6)
+        cv2.rectangle(img, (x1, ly - th - 6), (x1 + tw + 2, ly + bl), lbl_bg, -1)
+        cv2.putText(img, label, (x1 + 2, ly - 2), font, fs, (255, 255, 255), ft)
 
     @staticmethod
     def _overlay_info(frame: np.ndarray, ts: float, n_persons: int) -> np.ndarray:

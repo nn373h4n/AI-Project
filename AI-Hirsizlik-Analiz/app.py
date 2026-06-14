@@ -410,6 +410,49 @@ select {
   font-family: var(--f-b) !important;
   border-radius: 0 !important;
 }
+
+/* ── TELEGRAM PANEL ──────────────────────── */
+#tg-panel {
+  background: var(--s2);
+  border: 1px solid var(--bd2);
+  padding: 16px 18px;
+  margin-top: 14px;
+  position: relative;
+  overflow: hidden;
+}
+#tg-panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 2px;
+  background: linear-gradient(90deg, #2196F3, transparent);
+}
+.tg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.tg-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.tg-title {
+  font-family: var(--f-b);
+  font-size: .54rem;
+  color: #5baef7;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+}
+.tg-status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #555;
+  margin-left: auto;
+  transition: background .3s, box-shadow .3s;
+}
+.tg-status-dot.ok  { background: var(--grn); box-shadow: 0 0 8px var(--grn-g); }
+.tg-status-dot.err { background: var(--red); box-shadow: 0 0 8px var(--red-g); }
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -577,9 +620,13 @@ def analyze(
     return out_video, gallery, "\n".join(logs), stats
 
 
-def check_tg(token: str, chat: str) -> str:
+def check_tg(token: str, chat: str):
     ok, msg = test_connection(token, chat)
-    return f"> [{'OK' if ok else 'HATA'}] {msg}"
+    dot_cls = "ok" if ok else "err"
+    status  = f"> [{'OK' if ok else 'HATA'}] {msg}"
+    # inject dot class into the HTML badge via a returned pair
+    badge = f'<div class="tg-head"><span class="tg-icon">✈</span><span class="tg-title">Telegram Bildirimi</span><span class="tg-status-dot {dot_cls}"></span></div>'
+    return status, badge
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -600,36 +647,51 @@ def build_ui():
         # ── main two-column ──────────────────────────────────────────────────
         with gr.Row(equal_height=False):
 
-            # LEFT — upload + controls
-            with gr.Column(scale=5, min_width=310, elem_id="vid-in"):
+            # LEFT — upload + Telegram + settings
+            with gr.Column(scale=5, min_width=320, elem_id="vid-in"):
                 gr.HTML('<div class="sec"><span class="sec-mark">//</span> Video Girdisi</div>')
-                video_in = gr.Video(label="Analiz edilecek kayit", height=220)
+                video_in = gr.Video(label="Analiz edilecek kayit", height=200)
 
-                with gr.Accordion("Ayarlar & Konfigürasyon", open=False):
-                    gr.HTML('<div class="sec" style="margin-top:6px"><span class="sec-mark">//</span> Telegram</div>')
-                    tg_token = gr.Textbox(
-                        label="Bot Token",
-                        type="password",
-                        value=TELEGRAM_TOKEN,
-                        placeholder="123456:ABC-DEFxxxxxx",
-                    )
-                    tg_chat = gr.Textbox(
-                        label="Chat ID",
-                        value=TELEGRAM_CHAT_ID,
-                        placeholder="-100xxxxxxxxx",
-                    )
+                # ── Telegram Paneli (her zaman görünür) ──
+                tg_badge = gr.HTML(
+                    '<div class="tg-head">'
+                    '<span class="tg-icon">✈</span>'
+                    '<span class="tg-title">Telegram Bildirimi</span>'
+                    '<span class="tg-status-dot"></span>'
+                    '</div>'
+                )
+                with gr.Group(elem_id="tg-panel"):
                     with gr.Row():
-                        tg_btn = gr.Button("Baglanti Test", variant="secondary", size="sm")
-                    tg_st = gr.Textbox(label="Durum", interactive=False, lines=1)
+                        tg_token = gr.Textbox(
+                            label="Bot Token",
+                            type="password",
+                            value=TELEGRAM_TOKEN,
+                            placeholder="123456:ABC-DEF...",
+                            scale=3,
+                        )
+                        tg_chat = gr.Textbox(
+                            label="Chat ID",
+                            value=TELEGRAM_CHAT_ID,
+                            placeholder="-100xxxxxxx",
+                            scale=2,
+                        )
+                    with gr.Row():
+                        tg_btn = gr.Button("Baglanti Test Et", variant="secondary", size="sm")
+                    tg_st = gr.Textbox(
+                        label="Baglanti Durumu",
+                        interactive=False,
+                        lines=1,
+                        value="> Henuz test edilmedi — token ve chat id girin",
+                    )
 
-                    gr.HTML('<hr class="div">')
-                    gr.HTML('<div class="sec"><span class="sec-mark">//</span> Model</div>')
+                # ── Ayarlar (accordion) ──
+                with gr.Accordion("Model & Parametreler", open=False):
                     model_r = gr.Radio(
                         choices=["Hizli (nano)", "Dengeli (medium)", "Hassas (large)"],
                         value="Dengeli (medium)",
                         label="YOLOv8 agirlik",
                     )
-                    gr.HTML('<div class="sec" style="margin-top:12px"><span class="sec-mark">//</span> Parametreler</div>')
+                    gr.HTML('<hr class="div">')
                     dwell_sl = gr.Slider(2, 30, value=DEFAULT_DWELL_THRESHOLD, step=0.5,
                                          label="Bekleme esigi (saniye)")
                     move_sl  = gr.Slider(10, 200, value=DEFAULT_MOVE_THRESHOLD, step=5,
@@ -641,8 +703,8 @@ def build_ui():
 
             # RIGHT — output video
             with gr.Column(scale=7, elem_id="vid-out"):
-                gr.HTML('<div class="sec"><span class="sec-mark">//</span> Cikti</div>')
-                video_out = gr.Video(label="Islenmi video", height=418)
+                gr.HTML('<div class="sec"><span class="sec-mark">//</span> Cikti — Annotated</div>')
+                video_out = gr.Video(label="Islenmi video", height=440)
 
         # ── stats ────────────────────────────────────────────────────────────
         stats_box = gr.HTML(STATS_EMPTY)
@@ -671,7 +733,11 @@ def build_ui():
             fn=lambda: (None, None, [], "", STATS_EMPTY),
             outputs=[video_in, video_out, gallery, log_box, stats_box],
         )
-        tg_btn.click(fn=check_tg, inputs=[tg_token, tg_chat], outputs=[tg_st])
+        tg_btn.click(
+            fn=check_tg,
+            inputs=[tg_token, tg_chat],
+            outputs=[tg_st, tg_badge],
+        )
 
     return demo
 
