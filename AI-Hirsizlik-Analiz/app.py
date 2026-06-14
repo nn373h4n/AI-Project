@@ -627,22 +627,24 @@ _OUTPUT_DIR = os.path.abspath("output")
 
 def _video_html(path: str | None) -> str:
     if not path or not os.path.exists(path):
-        return '<div style="height:440px;display:flex;align-items:center;justify-content:center;color:#243040;font-family:monospace;font-size:.7rem;letter-spacing:2px">ANALİZ BEKLENİYOR</div>'
-    import time as _t
-    fname = os.path.basename(path)
-    # forward slash + cache-bust timestamp
-    url_path = _OUTPUT_DIR.replace("\\", "/")
-    bust = int(_t.time())
-    return f"""
-<video controls autoplay muted
-  style="width:100%;max-height:440px;background:#000;display:block"
-  preload="auto">
-  <source src="/file={url_path}/{fname}?v={bust}" type="video/mp4">
-</video>
-<div style="font-family:monospace;font-size:.55rem;color:#243040;letter-spacing:2px;margin-top:6px">
-  OUTPUT/{fname} &nbsp;·&nbsp; {bust}
-</div>
-"""
+        return (
+            '<div style="height:420px;display:flex;align-items:center;'
+            'justify-content:center;color:#243040;font-family:monospace;'
+            'font-size:.7rem;letter-spacing:2px;background:#070b15;'
+            'border:1px solid #111928">ANALİZ BEKLENİYOR</div>'
+        )
+    import base64
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    size_mb = round(os.path.getsize(path) / 1024 / 1024, 1)
+    return (
+        f'<video controls autoplay muted '
+        f'style="width:100%;max-height:420px;background:#000;display:block" '
+        f'src="data:video/mp4;base64,{b64}"></video>'
+        f'<div style="font-family:monospace;font-size:.5rem;color:#243040;'
+        f'letter-spacing:2px;margin-top:4px">'
+        f'OUTPUT/annotated.mp4 &nbsp;·&nbsp; {size_mb} MB</div>'
+    )
 
 
 def check_tg(token: str, chat: str):
