@@ -1,10 +1,13 @@
 import logging
+import warnings
 import torch
 from datetime import datetime
 
 import cv2
 import gradio as gr
 from PIL import Image
+
+warnings.filterwarnings("ignore", category=UserWarning, module="gradio")
 
 from config import (
     DEFAULT_DWELL_THRESHOLD,
@@ -187,9 +190,9 @@ body { background: var(--bg) !important; margin: 0; }
   border-radius: 0 !important;
 }
 
-/* top-right notch effect */
+/* top-right accent line */
 .block {
-  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%) !important;
+  border-top-color: var(--bd2) !important;
 }
 
 /* ── LABELS ──────────────────────────────── */
