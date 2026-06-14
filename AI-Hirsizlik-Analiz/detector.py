@@ -161,7 +161,7 @@ class TheftDetector:
                     "dwell_time": track.dwell_time,
                 })
 
-        return out_path, results
+        return out_path, results, frame_idx
 
     # ------------------------------------------------------------------
     def _process_frame(

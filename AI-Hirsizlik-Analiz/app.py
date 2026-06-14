@@ -1,12 +1,9 @@
 import logging
-import os
-import time
+import torch
 from datetime import datetime
 
 import cv2
 import gradio as gr
-import numpy as np
-import torch
 from PIL import Image
 
 from config import (
@@ -19,198 +16,482 @@ from config import (
 from detector import TheftDetector
 from notifier import send_telegram_alert, test_connection
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# CSS — Industrial Surveillance aesthetic
+# Fonts: Share Tech Mono (display/data) · IBM Plex Mono (body/labels)
+# ─────────────────────────────────────────────────────────────────────────────
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
-
-* { box-sizing: border-box; }
-
-body, .gradio-container {
-    background: #080808 !important;
-    font-family: 'JetBrains Mono', 'Courier New', monospace !important;
+:root {
+  --bg:        #04060f;
+  --s1:        #070a18;
+  --s2:        #0b1024;
+  --bd:        #111a2e;
+  --bd2:       #1c2d4a;
+  --acc:       #f5a520;
+  --acc-g:     rgba(245,165,32,.18);
+  --red:       #c0392b;
+  --red-g:     rgba(192,57,43,.18);
+  --grn:       #00c17a;
+  --grn-g:     rgba(0,193,122,.15);
+  --data:      #00e5a0;
+  --txt:       #6a7c96;
+  --txt-hi:    #b0c2da;
+  --txt-lo:    #1e2d45;
+  --f-d:       'Share Tech Mono', monospace;
+  --f-b:       'IBM Plex Mono', monospace;
 }
 
-.gradio-container { max-width: 1160px !important; padding: 20px !important; }
+*, *::before, *::after { box-sizing: border-box; }
+body { background: var(--bg) !important; margin: 0; }
 
-/* --- header --- */
+/* dot-grid + radial ambient */
+.gradio-container {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(18,35,80,.35) 0%, transparent 65%),
+    radial-gradient(ellipse 30% 20% at 85% 90%, rgba(245,165,32,.04) 0%, transparent 60%),
+    radial-gradient(circle 1px at 50% 50%, #111a2e 1px, transparent 0),
+    var(--bg) !important;
+  background-size: auto, auto, 36px 36px !important;
+  max-width: 1240px !important;
+  padding: 28px 32px !important;
+  font-family: var(--f-b) !important;
+}
+
+/* ── HEADER ─────────────────────────────── */
 #hdr {
-    padding: 16px 0 12px;
-    border-bottom: 1px solid #1b1b1b;
-    margin-bottom: 22px;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: flex-end;
+  padding: 0 0 20px;
+  margin-bottom: 36px;
+  border-bottom: 1px solid var(--bd);
+  position: relative;
+  overflow: hidden;
+}
+#hdr::before {
+  content: '';
+  position: absolute;
+  top: -40px; left: -32px;
+  width: 320px; height: 120px;
+  background: radial-gradient(ellipse, rgba(245,165,32,.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+#hdr::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 0;
+  width: 90px; height: 2px;
+  background: linear-gradient(90deg, var(--acc), transparent);
+}
+.eyebrow {
+  font-family: var(--f-b);
+  font-size: .5rem;
+  color: var(--txt-lo);
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.eyebrow::before {
+  content: '';
+  display: inline-block;
+  width: 18px; height: 1px;
+  background: var(--acc);
+  box-shadow: 0 0 8px var(--acc);
 }
 #hdr-title {
-    font-size: .95rem;
-    font-weight: 500;
-    color: #b8b8b8;
-    letter-spacing: 4px;
-    text-transform: uppercase;
-    margin: 0;
+  font-family: var(--f-d);
+  font-size: 2rem;
+  color: var(--txt-hi);
+  letter-spacing: 4px;
+  margin: 0;
+  line-height: 1;
+  text-transform: uppercase;
 }
-#hdr-sub {
-    font-size: .6rem;
-    color: #2e2e2e;
-    letter-spacing: 2px;
-    margin-top: 5px;
-    text-transform: uppercase;
+#hdr-title span {
+  color: var(--acc);
+  text-shadow: 0 0 32px var(--acc-g), 0 0 60px rgba(245,165,32,.08);
 }
-.status-row {
-    display: flex;
-    gap: 16px;
-    align-items: center;
+#hdr-right {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
 }
-.s-chip {
-    font-size: .58rem;
-    color: #2e2e2e;
-    letter-spacing: 1px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    text-transform: uppercase;
+#live-clock {
+  font-family: var(--f-d);
+  font-size: 1.15rem;
+  color: var(--txt);
+  letter-spacing: 3px;
+  min-width: 200px;
 }
-.dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #2ecc71;
-    box-shadow: 0 0 5px #2ecc71;
-    animation: blink 2.4s ease-in-out infinite;
+.chips {
+  display: flex; gap: 6px;
 }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.15} }
+.chip {
+  font-family: var(--f-b);
+  font-size: .46rem;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  border: 1px solid var(--bd);
+  color: var(--txt-lo);
+  padding: 3px 10px;
+  display: flex; align-items: center; gap: 5px;
+  transition: border-color .2s, color .2s;
+}
+.chip.live {
+  border-color: var(--grn);
+  color: var(--grn);
+}
+.chip.live:hover {
+  background: var(--grn-g);
+}
+.ldot {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--grn);
+  box-shadow: 0 0 7px var(--grn);
+  animation: lb 1.9s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes lb { 0%,100%{opacity:1} 50%{opacity:.08} }
 
-/* --- blocks --- */
-.block, .gr-form, .form, .panel {
-    background: #0c0c0c !important;
-    border: 1px solid #181818 !important;
-    border-radius: 0 !important;
+/* ── SECTION HEADER ─────────────────────── */
+.sec {
+  font-family: var(--f-b);
+  font-size: .48rem;
+  color: var(--txt-lo);
+  letter-spacing: 3.5px;
+  text-transform: uppercase;
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--bd);
+  display: flex; align-items: center; gap: 10px;
+}
+.sec-mark {
+  font-family: var(--f-d);
+  font-size: .75rem;
+  color: var(--acc);
+  line-height: 1;
 }
 
-.label-wrap span, .block label span {
-    color: #383838 !important;
-    font-size: .6rem !important;
-    text-transform: uppercase !important;
-    letter-spacing: 1.8px !important;
-    font-family: 'JetBrains Mono', monospace !important;
+/* ── GRADIO BLOCKS ───────────────────────── */
+.block, .gr-form, .form, .panel, .gap {
+  background: var(--s1) !important;
+  border: 1px solid var(--bd) !important;
+  border-radius: 0 !important;
 }
 
-/* --- inputs --- */
-input[type=text], input[type=password], textarea, select {
-    background: #060606 !important;
-    border: 1px solid #1e1e1e !important;
-    color: #aaa !important;
-    font-size: .78rem !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    border-radius: 0 !important;
-    padding: 8px !important;
-}
-input:focus, textarea:focus {
-    border-color: #2a2a2a !important;
-    box-shadow: none !important;
-    outline: none !important;
+/* top-right notch effect */
+.block {
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%) !important;
 }
 
-/* --- buttons --- */
+/* ── LABELS ──────────────────────────────── */
+.label-wrap span, .block label > span {
+  font-family: var(--f-b) !important;
+  color: var(--txt-lo) !important;
+  font-size: .52rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 2.5px !important;
+}
+
+/* ── INPUTS ──────────────────────────────── */
+input[type=text], input[type=password], textarea {
+  background: rgba(4,6,15,.95) !important;
+  border: 1px solid var(--bd) !important;
+  color: var(--txt) !important;
+  font-family: var(--f-b) !important;
+  font-size: .76rem !important;
+  border-radius: 0 !important;
+  padding: 9px 13px !important;
+  transition: border-color .2s, color .2s !important;
+}
+input[type=text]:focus, input[type=password]:focus, textarea:focus {
+  border-color: var(--bd2) !important;
+  color: var(--txt-hi) !important;
+  box-shadow: inset 0 0 0 1px rgba(245,165,32,.06) !important;
+  outline: none !important;
+}
+
+/* ── BUTTONS ─────────────────────────────── */
 button {
-    border-radius: 0 !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: .68rem !important;
-    letter-spacing: 2.5px !important;
-    text-transform: uppercase !important;
-    transition: background .15s, color .15s !important;
+  font-family: var(--f-b) !important;
+  font-size: .58rem !important;
+  letter-spacing: 3.5px !important;
+  text-transform: uppercase !important;
+  border-radius: 0 !important;
+  cursor: pointer !important;
+  transition: all .2s !important;
 }
 button.primary {
-    background: transparent !important;
-    border: 1px solid #d4a017 !important;
-    color: #d4a017 !important;
+  background: transparent !important;
+  border: 1px solid var(--acc) !important;
+  color: var(--acc) !important;
+  position: relative !important;
+  overflow: hidden !important;
 }
 button.primary:hover {
-    background: #d4a017 !important;
-    color: #000 !important;
+  background: var(--acc) !important;
+  color: #000 !important;
+  box-shadow: 0 0 28px var(--acc-g) !important;
 }
 button.secondary {
-    background: transparent !important;
-    border: 1px solid #232323 !important;
-    color: #383838 !important;
+  background: transparent !important;
+  border: 1px solid var(--bd) !important;
+  color: var(--txt-lo) !important;
 }
 button.secondary:hover {
-    border-color: #3a3a3a !important;
-    color: #666 !important;
+  border-color: var(--bd2) !important;
+  color: var(--txt) !important;
 }
 
-/* --- sliders --- */
-input[type=range] { accent-color: #d4a017 !important; background: transparent !important; border: none !important; }
+/* ── SLIDERS ─────────────────────────────── */
+input[type=range] {
+  accent-color: var(--acc) !important;
+  background: transparent !important;
+  border: none !important;
+}
 
-/* --- accordion --- */
-.gr-accordion { border-color: #181818 !important; background: #090909 !important; }
-.gr-accordion summary { color: #444 !important; font-size: .65rem !important; letter-spacing: 1.5px !important; }
+/* ── ACCORDION ───────────────────────────── */
+.accordion {
+  background: var(--s2) !important;
+  border: 1px solid var(--bd) !important;
+  border-radius: 0 !important;
+}
+.accordion > button {
+  font-size: .54rem !important;
+  letter-spacing: 2px !important;
+  color: var(--txt-lo) !important;
+}
 
-/* --- log --- */
+/* ── VIDEO ───────────────────────────────── */
+video {
+  border: 1px solid var(--bd) !important;
+  border-radius: 0 !important;
+  display: block !important;
+}
+/* scanline overlay on video wrappers */
+#vid-in .block::after, #vid-out .block::after {
+  content: '' !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0,0,0,.05) 3px,
+    rgba(0,0,0,.05) 4px
+  ) !important;
+  pointer-events: none !important;
+  z-index: 5 !important;
+}
+
+/* corner brackets on video areas */
+#vid-in, #vid-out {
+  position: relative;
+}
+#vid-in::before, #vid-in::after,
+#vid-out::before, #vid-out::after {
+  content: '';
+  position: absolute;
+  width: 18px; height: 18px;
+  border-color: rgba(245,165,32,.5);
+  border-style: solid;
+  z-index: 10;
+  pointer-events: none;
+}
+#vid-in::before,  #vid-out::before  { top:6px;  left:6px;  border-width:1px 0 0 1px; }
+#vid-in::after,   #vid-out::after   { bottom:6px; right:6px; border-width:0 1px 1px 0; }
+
+/* ── GALLERY ─────────────────────────────── */
+.gallery-item {
+  border: 1px solid rgba(192,57,43,.6) !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  position: relative !important;
+}
+.gallery-item img {
+  filter: contrast(1.08) saturate(.8) !important;
+  border-radius: 0 !important;
+  transition: filter .3s !important;
+}
+.gallery-item:hover img { filter: contrast(1.12) saturate(.95) !important; }
+
+/* ── LOG TERMINAL ────────────────────────── */
 #log-box textarea {
-    color: #3dba6e !important;
-    background: #030303 !important;
-    font-size: .68rem !important;
-    line-height: 1.75 !important;
-    border-color: #111 !important;
+  font-family: var(--f-d) !important;
+  font-size: .68rem !important;
+  color: var(--data) !important;
+  background: #020409 !important;
+  border-color: var(--bd) !important;
+  line-height: 1.9 !important;
+  letter-spacing: .5px !important;
+  text-shadow: 0 0 12px rgba(0,229,160,.15) !important;
 }
 
-/* --- gallery --- */
-.gallery-item { border: 1px solid #7b1212 !important; border-radius: 0 !important; }
-.gallery-item img { border-radius: 0 !important; }
-
-/* --- video --- */
-video { border: 1px solid #1a1a1a !important; border-radius: 0 !important; }
-
-/* --- progress --- */
-.progress-bar { background: #d4a017 !important; border-radius: 0 !important; }
-
-/* --- section titles --- */
-.sec-title {
-    font-size: .58rem;
-    color: #303030;
-    letter-spacing: 2.5px;
-    text-transform: uppercase;
-    border-bottom: 1px solid #141414;
-    padding-bottom: 6px;
-    margin-bottom: 4px;
+/* ── PROGRESS ────────────────────────────── */
+.progress-bar, [class*=progress-level] {
+  background: linear-gradient(90deg, var(--acc), rgba(245,165,32,.6)) !important;
+  box-shadow: 0 0 14px var(--acc-g) !important;
+  border-radius: 0 !important;
 }
 
-/* --- alert strip --- */
-.alert-strip {
-    border: 1px solid #7b1212;
-    color: #c0392b;
-    font-size: .65rem;
-    letter-spacing: 1px;
-    padding: 8px 12px;
-    margin-top: 6px;
-    display: none;
+/* ── STATS GRID ──────────────────────────── */
+#stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--bd);
+  border: 1px solid var(--bd);
+  margin: 24px 0;
+}
+.sc {
+  background: var(--s1);
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 6px;
+  position: relative;
+  overflow: hidden;
+}
+.sc::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 2px; height: 100%;
+  background: var(--bd2);
+}
+.sc:first-child::after { background: var(--acc); box-shadow: 0 0 10px var(--acc-g); }
+.sc:nth-child(3)::after { background: var(--red); box-shadow: 0 0 10px var(--red-g); }
+.sc-lbl {
+  font-family: var(--f-b);
+  font-size: .47rem;
+  color: var(--txt-lo);
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+}
+.sc-val {
+  font-family: var(--f-d);
+  font-size: 1.5rem;
+  color: var(--txt-hi);
+  line-height: 1;
+  letter-spacing: 1px;
+}
+.sc-val.d { color: var(--red);  text-shadow: 0 0 20px var(--red-g); }
+.sc-val.g { color: var(--grn);  text-shadow: 0 0 20px var(--grn-g); }
+.sc-val.a { color: var(--acc);  text-shadow: 0 0 20px var(--acc-g); }
+.sc-sub {
+  font-family: var(--f-b);
+  font-size: .45rem;
+  color: var(--txt-lo);
+  letter-spacing: 1px;
+  margin-top: 2px;
+}
+
+/* ── DIVIDER ─────────────────────────────── */
+.div {
+  border: none;
+  border-top: 1px solid var(--bd);
+  margin: 22px 0;
+}
+
+/* ── SELECT ──────────────────────────────── */
+select {
+  background: var(--bg) !important;
+  border: 1px solid var(--bd) !important;
+  color: var(--txt) !important;
+  font-family: var(--f-b) !important;
+  border-radius: 0 !important;
 }
 """
 
-# ---------------------------------------------------------------------------
-_detector: TheftDetector | None = None
+# ─────────────────────────────────────────────────────────────────────────────
+FONTS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono'
+    '&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">'
+)
+
+HEADER = """
+<div id="hdr">
+  <div>
+    <div class="eyebrow">Guvenlik Analiz Sistemi · CAM/AI/GPU</div>
+    <h1 id="hdr-title">HIRSIZLIk <span>ANALİZ</span></h1>
+  </div>
+  <div id="hdr-right">
+    <div id="live-clock">--:--:--</div>
+    <div class="chips">
+      <div class="chip live"><span class="ldot"></span>CANLI</div>
+      <div class="chip">GPU</div>
+      <div class="chip">YOLOv8</div>
+      <div class="chip">ByteTrack</div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  function tick(){
+    var el=document.getElementById('live-clock');
+    if(!el)return;
+    var d=new Date();
+    var t=[d.getHours(),d.getMinutes(),d.getSeconds()]
+           .map(function(n){return String(n).padStart(2,'0')}).join(':');
+    var dt=d.toLocaleDateString('tr-TR',{day:'2-digit',month:'2-digit',year:'numeric'});
+    el.textContent=t+' · '+dt;
+  }
+  tick(); setInterval(tick,1000);
+})();
+</script>
+"""
+
+STATS_EMPTY = """
+<div id="stats-row">
+  <div class="sc">
+    <div class="sc-lbl">Analiz Edilen Kare</div>
+    <div class="sc-val a">—</div>
+    <div class="sc-sub">Bekliyor</div>
+  </div>
+  <div class="sc">
+    <div class="sc-lbl">Tespit Edilen Kisi</div>
+    <div class="sc-val">—</div>
+    <div class="sc-sub">Bekliyor</div>
+  </div>
+  <div class="sc">
+    <div class="sc-lbl">Suphe Tespiti</div>
+    <div class="sc-val d">—</div>
+    <div class="sc-sub">Bekliyor</div>
+  </div>
+  <div class="sc">
+    <div class="sc-lbl">Islem Cihazi</div>
+    <div class="sc-val g">—</div>
+    <div class="sc-sub">Hazir</div>
+  </div>
+</div>
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+_det: TheftDetector | None = None
 
 
-def _get_detector(model_choice: str, dwell: float, move: float) -> TheftDetector:
-    model_map = {
-        "Hizli  (nano)": "yolov8n.pt",
-        "Dengeli (medium)": "yolov8m.pt",
-        "Hassas (large)": "yolov8l.pt",
-    }
-    global _detector
-    _detector = TheftDetector(
-        model_name=model_map.get(model_choice, DEFAULT_MODEL),
+def _make(model_choice: str, dwell: float, move: float) -> TheftDetector:
+    global _det
+    m = {"Hizli (nano)": "yolov8n.pt",
+         "Dengeli (medium)": "yolov8m.pt",
+         "Hassas (large)": "yolov8l.pt"}
+    _det = TheftDetector(
+        model_name=m.get(model_choice, DEFAULT_MODEL),
         dwell_threshold=dwell,
         movement_threshold=move,
     )
-    return _detector
+    return _det
 
 
-def _now() -> str:
+def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
@@ -221,62 +502,85 @@ def analyze(
     model_choice: str,
     dwell: float,
     move: float,
-    progress=gr.Progress(track_tqdm=False),
+    progress=gr.Progress(),
 ):
     logs = []
 
     if video_file is None:
-        return None, [], "Hata: video yuklenmedi."
+        return None, [], "> HATA: video dosyasi secilmedi.", STATS_EMPTY
 
-    device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    logs.append(f"[{_now()}] Analiz basladi  |  Cihaz: {device_str.upper()}")
-    logs.append(f"[{_now()}] Model: {model_choice}")
+    device = "CUDA" if torch.cuda.is_available() else "CPU"
+    logs.append(f"> [{_ts()}] Sistem basladi  |  Cihaz:{device}  Model:{model_choice}")
 
-    det = _get_detector(model_choice, dwell, move)
+    det = _make(model_choice, dwell, move)
 
-    def prog_cb(p: float):
-        progress(p, desc=f"Analiz ediliyor  {p*100:.0f}%")
+    def prog(p: float):
+        progress(p, desc=f"Islem  {p*100:.0f}%")
 
     try:
-        out_video, flagged = det.process_video(video_file, progress_fn=prog_cb)
+        out_video, flagged, frame_count = det.process_video(video_file, progress_fn=prog)
     except Exception as exc:
-        return None, [], f"[HATA] {exc}"
+        return None, [], f"> HATA: {exc}", STATS_EMPTY
 
-    logs.append(f"[{_now()}] Bitti. {len(flagged)} suphe tespiti.")
+    total = len(det.tracks)
+    logs.append(f"> [{_ts()}] Tamamlandi  kare:{frame_count}  kisi:{total}  suphe:{len(flagged)}")
 
     gallery = []
     for item in flagged:
         tid = item["track_id"]
-        frame_bgr = item["frame"]
+        bgr = item["frame"]
         reason = item["reason"]
         dwell_t = item["dwell_time"]
         vid_ts = det.tracks[tid].last_ts
 
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(rgb)
-        gallery.append((pil_img, f"#{tid} — {reason[:40]}"))
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        gallery.append((Image.fromarray(rgb), f"#{tid}  {reason[:48]}"))
 
         if tg_token and tg_chat:
-            ok = send_telegram_alert(tg_token, tg_chat, frame_bgr, tid, reason, dwell_t, vid_ts)
-            durum = "gonderildi" if ok else "gonderilemedi"
-            logs.append(f"[{_now()}] Telegram #{tid}: {durum}")
+            ok = send_telegram_alert(tg_token, tg_chat, bgr, tid, reason, dwell_t, vid_ts)
+            logs.append(f"> [{_ts()}] Telegram #{tid}: {'GONDERILDI' if ok else 'HATA'}")
         else:
-            logs.append(f"[{_now()}] #{tid} tespit edildi (Telegram ayarsiz)")
+            logs.append(f"> [{_ts()}] #{tid} tespit — Telegram yapilandirilmamis")
 
+    if not flagged:
+        logs.append(f"> [{_ts()}] Supe davranis tespit edilmedi.")
+
+    danger_cls = "d" if flagged else "g"
+    stats = f"""
+<div id="stats-row">
+  <div class="sc">
+    <div class="sc-lbl">Analiz Edilen Kare</div>
+    <div class="sc-val a">{frame_count:,}</div>
+    <div class="sc-sub">@25–60 fps</div>
+  </div>
+  <div class="sc">
+    <div class="sc-lbl">Tespit Edilen Kisi</div>
+    <div class="sc-val">{total}</div>
+    <div class="sc-sub">Benzersiz kimlik</div>
+  </div>
+  <div class="sc">
+    <div class="sc-lbl">Suphe Tespiti</div>
+    <div class="sc-val {danger_cls}">{len(flagged)}</div>
+    <div class="sc-sub">{"Bildirim gonderildi" if flagged and tg_token else "Kayit alindi"}</div>
+  </div>
+  <div class="sc">
+    <div class="sc-lbl">Islem Cihazi</div>
+    <div class="sc-val g">{device}</div>
+    <div class="sc-sub">YOLOv8 · ByteTrack</div>
+  </div>
+</div>
+"""
     progress(1.0, desc="Tamamlandi")
-    return out_video, gallery, "\n".join(logs)
+    return out_video, gallery, "\n".join(logs), stats
 
 
-def check_telegram(token: str, chat: str):
+def check_tg(token: str, chat: str) -> str:
     ok, msg = test_connection(token, chat)
-    prefix = "OK" if ok else "HATA"
-    return f"[{prefix}] {msg}"
+    return f"> [{'OK' if ok else 'HATA'}] {msg}"
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 def build_ui():
-    device_label = "CUDA" if torch.cuda.is_available() else "CPU"
-
     with gr.Blocks(
         css=CSS,
         title="Hirsizlik Analiz",
@@ -287,114 +591,91 @@ def build_ui():
         ),
     ) as demo:
 
-        # Header
-        gr.HTML(f"""
-        <div id="hdr">
-          <div>
-            <div id="hdr-title">Hirsizlik Analiz Sistemi</div>
-            <div id="hdr-sub">Computer Vision &nbsp;·&nbsp; GPU Hizlandirilmis &nbsp;·&nbsp; Anlik Tespit</div>
-          </div>
-          <div class="status-row">
-            <div class="s-chip"><span class="dot"></span> Sistem Hazir</div>
-            <div class="s-chip">YOLOv8 + ByteTrack</div>
-            <div class="s-chip">{device_label}</div>
-          </div>
-        </div>
-        """)
+        gr.HTML(FONTS)
+        gr.HTML(HEADER)
 
-        # --- main row ---
+        # ── main two-column ──────────────────────────────────────────────────
         with gr.Row(equal_height=False):
-            # left column: upload + settings
-            with gr.Column(scale=2, min_width=320):
-                gr.HTML('<div class="sec-title">Video Girdisi</div>')
-                video_input = gr.Video(label="Analiz edilecek video", height=220)
 
-                with gr.Accordion("Ayarlar", open=False):
-                    with gr.Group():
-                        tg_token = gr.Textbox(
-                            label="Telegram Bot Token",
-                            type="password",
-                            value=TELEGRAM_TOKEN,
-                            placeholder="123456:ABC-...",
-                        )
-                        tg_chat = gr.Textbox(
-                            label="Telegram Chat ID",
-                            value=TELEGRAM_CHAT_ID,
-                            placeholder="-100123456789",
-                        )
-                        tg_test_btn = gr.Button("Baglanti Test Et", variant="secondary", size="sm")
-                        tg_status = gr.Textbox(label="Telegram Durumu", interactive=False, lines=1)
+            # LEFT — upload + controls
+            with gr.Column(scale=5, min_width=310, elem_id="vid-in"):
+                gr.HTML('<div class="sec"><span class="sec-mark">//</span> Video Girdisi</div>')
+                video_in = gr.Video(label="Analiz edilecek kayit", height=220)
 
-                    gr.HTML('<hr style="border-color:#141414;margin:10px 0">')
+                with gr.Accordion("Ayarlar & Konfigürasyon", open=False):
+                    gr.HTML('<div class="sec" style="margin-top:6px"><span class="sec-mark">//</span> Telegram</div>')
+                    tg_token = gr.Textbox(
+                        label="Bot Token",
+                        type="password",
+                        value=TELEGRAM_TOKEN,
+                        placeholder="123456:ABC-DEFxxxxxx",
+                    )
+                    tg_chat = gr.Textbox(
+                        label="Chat ID",
+                        value=TELEGRAM_CHAT_ID,
+                        placeholder="-100xxxxxxxxx",
+                    )
+                    with gr.Row():
+                        tg_btn = gr.Button("Baglanti Test", variant="secondary", size="sm")
+                    tg_st = gr.Textbox(label="Durum", interactive=False, lines=1)
 
-                    model_radio = gr.Radio(
-                        choices=["Hizli  (nano)", "Dengeli (medium)", "Hassas (large)"],
+                    gr.HTML('<hr class="div">')
+                    gr.HTML('<div class="sec"><span class="sec-mark">//</span> Model</div>')
+                    model_r = gr.Radio(
+                        choices=["Hizli (nano)", "Dengeli (medium)", "Hassas (large)"],
                         value="Dengeli (medium)",
-                        label="Model",
+                        label="YOLOv8 agirlik",
                     )
-                    dwell_sl = gr.Slider(
-                        2, 25, value=DEFAULT_DWELL_THRESHOLD, step=0.5,
-                        label="Bekleme esigi (saniye)",
-                    )
-                    move_sl = gr.Slider(
-                        10, 200, value=DEFAULT_MOVE_THRESHOLD, step=5,
-                        label="Hareket esigi (piksel std)",
-                    )
+                    gr.HTML('<div class="sec" style="margin-top:12px"><span class="sec-mark">//</span> Parametreler</div>')
+                    dwell_sl = gr.Slider(2, 30, value=DEFAULT_DWELL_THRESHOLD, step=0.5,
+                                         label="Bekleme esigi (saniye)")
+                    move_sl  = gr.Slider(10, 200, value=DEFAULT_MOVE_THRESHOLD, step=5,
+                                         label="Hareket esigi (piksel std)")
 
                 with gr.Row():
-                    run_btn = gr.Button("ANALİZ BAŞLAT", variant="primary")
-                    clr_btn = gr.Button("Temizle", variant="secondary")
+                    run_btn = gr.Button("ANALİZ BAŞLAT", variant="primary", size="lg")
+                    clr_btn = gr.Button("Sifirla", variant="secondary")
 
-            # right column: output video
-            with gr.Column(scale=3):
-                gr.HTML('<div class="sec-title">Islenmi Video</div>')
-                video_output = gr.Video(label="Annotated output", height=380)
+            # RIGHT — output video
+            with gr.Column(scale=7, elem_id="vid-out"):
+                gr.HTML('<div class="sec"><span class="sec-mark">//</span> Cikti</div>')
+                video_out = gr.Video(label="Islenmi video", height=418)
 
-        # --- suspects gallery ---
-        gr.HTML('<div class="sec-title" style="margin-top:18px">Suphe Tespitleri — En Net Kare</div>')
+        # ── stats ────────────────────────────────────────────────────────────
+        stats_box = gr.HTML(STATS_EMPTY)
+
+        # ── gallery ──────────────────────────────────────────────────────────
+        gr.HTML('<div class="sec"><span class="sec-mark">//</span> Suphe Tespitleri — En Kaliteli Kare</div>')
         gallery = gr.Gallery(
             label="",
             columns=5,
             rows=2,
-            height=260,
+            height=290,
             object_fit="cover",
-            elem_id="suspect-gallery",
         )
 
-        # --- log ---
-        gr.HTML('<div class="sec-title" style="margin-top:14px">Sistem Logu</div>')
-        log_box = gr.Textbox(
-            label="",
-            lines=7,
-            interactive=False,
-            elem_id="log-box",
-        )
+        # ── log ──────────────────────────────────────────────────────────────
+        gr.HTML('<div class="sec"><span class="sec-mark">//</span> Sistem Logu</div>')
+        log_box = gr.Textbox(label="", lines=8, interactive=False, elem_id="log-box")
 
-        # --- wiring ---
+        # ── wiring ───────────────────────────────────────────────────────────
         run_btn.click(
             fn=analyze,
-            inputs=[video_input, tg_token, tg_chat, model_radio, dwell_sl, move_sl],
-            outputs=[video_output, gallery, log_box],
+            inputs=[video_in, tg_token, tg_chat, model_r, dwell_sl, move_sl],
+            outputs=[video_out, gallery, log_box, stats_box],
         )
-
         clr_btn.click(
-            fn=lambda: (None, None, [], ""),
-            outputs=[video_input, video_output, gallery, log_box],
+            fn=lambda: (None, None, [], "", STATS_EMPTY),
+            outputs=[video_in, video_out, gallery, log_box, stats_box],
         )
-
-        tg_test_btn.click(
-            fn=check_telegram,
-            inputs=[tg_token, tg_chat],
-            outputs=[tg_status],
-        )
+        tg_btn.click(fn=check_tg, inputs=[tg_token, tg_chat], outputs=[tg_st])
 
     return demo
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    ui = build_ui()
-    ui.launch(
+    build_ui().launch(
         server_port=7860,
         server_name="0.0.0.0",
         share=False,
