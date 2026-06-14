@@ -672,15 +672,23 @@ def build_ui():
         gr.HTML(FONTS)
         gr.HTML(HEADER)
 
-        # ── main two-column ──────────────────────────────────────────────────
-        with gr.Row(equal_height=False):
-
-            # LEFT — upload + Telegram + settings
-            with gr.Column(scale=5, min_width=320, elem_id="vid-in"):
+        # ── üst satır: upload sol + output sag ──────────────────────────────
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=1, min_width=340):
                 gr.HTML('<div class="sec"><span class="sec-mark">//</span> Video Girdisi</div>')
-                video_in = gr.Video(label="Analiz edilecek kayit", height=200)
+                video_in = gr.Video(label="Analiz edilecek kayit", height=260)
 
-                # ── Telegram Paneli (her zaman görünür) ──
+                with gr.Row():
+                    run_btn = gr.Button("ANALİZ BAŞLAT", variant="primary", size="lg")
+                    clr_btn = gr.Button("Sifirla", variant="secondary")
+
+            with gr.Column(scale=2, min_width=400):
+                gr.HTML('<div class="sec"><span class="sec-mark">//</span> Analiz Ciktisi</div>')
+                video_out = gr.HTML(_video_html(None))
+
+        # ── Telegram + Ayarlar yan yana ─────────────────────────────────────
+        with gr.Row():
+            with gr.Column(scale=1):
                 tg_badge = gr.HTML(
                     '<div class="tg-head">'
                     '<span class="tg-icon">✈</span>'
@@ -690,49 +698,23 @@ def build_ui():
                 )
                 with gr.Group(elem_id="tg-panel"):
                     with gr.Row():
-                        tg_token = gr.Textbox(
-                            label="Bot Token",
-                            type="password",
-                            value=TELEGRAM_TOKEN,
-                            placeholder="123456:ABC-DEF...",
-                            scale=3,
-                        )
-                        tg_chat = gr.Textbox(
-                            label="Chat ID",
-                            value=TELEGRAM_CHAT_ID,
-                            placeholder="-100xxxxxxx",
-                            scale=2,
-                        )
-                    with gr.Row():
-                        tg_btn = gr.Button("Baglanti Test Et", variant="secondary", size="sm")
-                    tg_st = gr.Textbox(
-                        label="Baglanti Durumu",
-                        interactive=False,
-                        lines=1,
-                        value="> Henuz test edilmedi — token ve chat id girin",
-                    )
+                        tg_token = gr.Textbox(label="Bot Token", type="password",
+                                              value=TELEGRAM_TOKEN,
+                                              placeholder="123456:ABC-DEF...", scale=3)
+                        tg_chat  = gr.Textbox(label="Chat ID", value=TELEGRAM_CHAT_ID,
+                                              placeholder="-100xxxxxxx", scale=2)
+                    tg_btn = gr.Button("Baglanti Test Et", variant="secondary", size="sm")
+                    tg_st  = gr.Textbox(label="Durum", interactive=False, lines=1,
+                                        value="> Token ve chat id girin, test edin")
 
-                # ── Ayarlar (accordion) ──
+            with gr.Column(scale=1):
                 with gr.Accordion("Model & Parametreler", open=False):
-                    model_r = gr.Radio(
-                        choices=["Hizli (nano)", "Dengeli (medium)", "Hassas (large)"],
-                        value="Dengeli (medium)",
-                        label="YOLOv8 agirlik",
-                    )
-                    gr.HTML('<hr class="div">')
+                    model_r  = gr.Radio(["Hizli (nano)", "Dengeli (medium)", "Hassas (large)"],
+                                        value="Dengeli (medium)", label="YOLOv8 agirlik")
                     dwell_sl = gr.Slider(2, 30, value=DEFAULT_DWELL_THRESHOLD, step=0.5,
                                          label="Bekleme esigi (saniye)")
                     move_sl  = gr.Slider(10, 200, value=DEFAULT_MOVE_THRESHOLD, step=5,
                                          label="Hareket esigi (piksel std)")
-
-                with gr.Row():
-                    run_btn = gr.Button("ANALİZ BAŞLAT", variant="primary", size="lg")
-                    clr_btn = gr.Button("Sifirla", variant="secondary")
-
-            # RIGHT — output video (HTML player, Gradio static file serving)
-            with gr.Column(scale=7, elem_id="vid-out"):
-                gr.HTML('<div class="sec"><span class="sec-mark">//</span> Cikti — Annotated</div>')
-                video_out = gr.HTML(_video_html(None))
 
         # ── stats ────────────────────────────────────────────────────────────
         stats_box = gr.HTML(STATS_EMPTY)
