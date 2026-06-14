@@ -125,10 +125,9 @@ class TheftDetector:
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
 
-        # H.264 çıktısı için ffmpeg pipe kullan (tarayıcı uyumlu)
-        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-        out_path = tmp.name
-        tmp.close()
+        # H.264 çıktısı — sabit klasöre kaydet (Gradio'nun temp temizliğinden korunsun)
+        os.makedirs("output", exist_ok=True)
+        out_path = os.path.abspath("output/annotated.mp4")
 
         ffmpeg_cmd = [
             _FFMPEG, "-y",

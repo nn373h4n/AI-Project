@@ -568,6 +568,12 @@ def analyze(
     except Exception as exc:
         return None, [], f"> HATA: {exc}", STATS_EMPTY
 
+    # Gradio 6'nın servis edebileceği temp konumuna kopyala
+    import shutil, tempfile
+    served = os.path.join(tempfile.gettempdir(), "hirsizlik_annotated.mp4")
+    shutil.copy2(out_video, served)
+    out_video = served
+
     total = len(det.tracks)
     logs.append(f"> [{_ts()}] Tamamlandi  kare:{frame_count}  kisi:{total}  suphe:{len(flagged)}")
 
@@ -704,7 +710,8 @@ def build_ui():
             # RIGHT — output video
             with gr.Column(scale=7, elem_id="vid-out"):
                 gr.HTML('<div class="sec"><span class="sec-mark">//</span> Cikti — Annotated</div>')
-                video_out = gr.Video(label="Islenmi video", height=440)
+                video_out = gr.Video(label="Islenmi video", height=440, format="mp4")
+                dl_btn = gr.File(label="Videoyu indir", visible=False)
 
         # ── stats ────────────────────────────────────────────────────────────
         stats_box = gr.HTML(STATS_EMPTY)
@@ -724,14 +731,19 @@ def build_ui():
         log_box = gr.Textbox(label="", lines=8, interactive=False, elem_id="log-box")
 
         # ── wiring ───────────────────────────────────────────────────────────
+        def analyze_and_dl(*args):
+            vid, gal, log, stats = analyze(*args)
+            dl = gr.File(value=vid, visible=True) if vid else gr.File(visible=False)
+            return vid, gal, log, stats, dl
+
         run_btn.click(
-            fn=analyze,
+            fn=analyze_and_dl,
             inputs=[video_in, tg_token, tg_chat, model_r, dwell_sl, move_sl],
-            outputs=[video_out, gallery, log_box, stats_box],
+            outputs=[video_out, gallery, log_box, stats_box, dl_btn],
         )
         clr_btn.click(
-            fn=lambda: (None, None, [], "", STATS_EMPTY),
-            outputs=[video_in, video_out, gallery, log_box, stats_box],
+            fn=lambda: (None, None, [], "", STATS_EMPTY, gr.File(visible=False)),
+            outputs=[video_in, video_out, gallery, log_box, stats_box, dl_btn],
         )
         tg_btn.click(
             fn=check_tg,
@@ -744,9 +756,12 @@ def build_ui():
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import os
+    os.makedirs("output", exist_ok=True)
     build_ui().launch(
         server_port=7860,
         server_name="0.0.0.0",
         share=False,
         show_error=True,
+        allowed_paths=[os.path.abspath("output")],
     )
